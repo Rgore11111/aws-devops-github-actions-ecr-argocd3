@@ -1,0 +1,66 @@
+name: Build and Push UI Service to ECR
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "github-files/src/ui/src/**"
+
+permissions:
+  id-token: write
+  contents: write
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: retail-store/ui
+
+jobs:
+  build-and-push-ui:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::391755179224:role/github-actions-oidc-role-ui3
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Define image tags
+        run: |
+          SHA_TAG=sha-${GITHUB_SHA::7}
+          IMAGE_BASE="${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}"
+          echo "IMAGE_BASE=$IMAGE_BASE" >> $GITHUB_ENV
+          echo "TAGS=latest $SHA_TAG" >> $GITHUB_ENV
+
+      - name: Build and push Docker images
+        run: |
+          chmod +x github-files/src/ui/mvnw
+          for tag in $TAGS; do
+            IMAGE_URI="$IMAGE_BASE:$tag"
+            docker build -t $IMAGE_URI github-files/src/ui
+            docker push $IMAGE_URI
+          done
+
+      - name: Setup Git auth using GITHUB_TOKEN
+        run: |
+          git config --global user.name "ci-bot"
+          git config --global user.email "ci-bot@stacksimplify.com"
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+
+      - name: Update Helm values file with new image tag
+        run: |
+          cd github-files/src/ui
+          sed -i "s|^  tag: .*|  tag: sha-${GITHUB_SHA::7}|" chart/values-ui.yaml
+          git add chart/values-ui.yaml
+          git commit -m "Update UI image tag to sha-${GITHUB_SHA::7}" || echo "No changes"
+          git push origin main
+
+      - name: CI Complete
+        run: echo "Pipeline finished successfully"
