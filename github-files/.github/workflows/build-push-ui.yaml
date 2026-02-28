@@ -2,17 +2,18 @@ name: Build and Push UI Service to ECR
 
 on:
   push:
-    branches: [ "main" ]
+    branches:
+      - main
     paths:
-      - "src/ui/src/**"
-      #- ".github/workflows/build-push-ui.yaml" # During testing phases only for prod comment this line
+      - "src/ui/**"   # UI changes only trigger pipeline
 
 permissions:
-  id-token: write # Needed for OIDC
-  contents: write # Needed to push commits
+  id-token: write      # Required for OIDC
+  contents: write      # Required to push Helm update commit
 
 env:
   AWS_REGION: us-east-1
+  AWS_ACCOUNT_ID: 391755179224
   ECR_REPOSITORY: retail-store/ui
 
 jobs:
@@ -20,58 +21,62 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1️⃣ Checkout Code
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Configure AWS credentials via OIDC
+      # 2️⃣ Configure AWS Credentials via OIDC
+      - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::180789647333:role/github-actions-oidc-role-ui3
+          role-to-assume: arn:aws:iam::391755179224:role/github-actions-oidc-role-ui3
           aws-region: ${{ env.AWS_REGION }}
 
+      # 3️⃣ Login to Amazon ECR
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      # 4️⃣ Define Image Tags
       - name: Define image tags
-        id: vars
         run: |
-          SHA_TAG=sha-${GITHUB_SHA::7}
-          IMAGE_BASE="${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}"
-          echo "IMAGE_BASE=$IMAGE_BASE" >> $GITHUB_ENV
-          echo "TAGS=latest $SHA_TAG" >> $GITHUB_ENV
-          echo "Using tags: latest and $SHA_TAG"
-          echo "latest = convenience tag for testing"
-          echo "$SHA_TAG = immutable tag used in Helm values"
+          SHORT_SHA=$(echo $GITHUB_SHA | cut -c1-7)
+          echo "SHORT_SHA=$SHORT_SHA" >> $GITHUB_ENV
+          echo "IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}" >> $GITHUB_ENV
+          echo "TAGS=latest sha-$SHORT_SHA" >> $GITHUB_ENV
 
-      - name: Build and push Docker images
+      # 5️⃣ Build & Push Docker Image
+      - name: Build and Push Docker Images
         run: |
           for tag in $TAGS; do
-            IMAGE_URI="$IMAGE_BASE:$tag"
-            echo "Building and pushing $IMAGE_URI"
-            docker build -t $IMAGE_URI src/ui
-            docker push $IMAGE_URI
+            echo "Building image with tag: $tag"
+            docker build -t $IMAGE_URI:$tag src/ui
+            docker push $IMAGE_URI:$tag
           done
 
-      - name: Setup Git auth using GITHUB_TOKEN
+      # 6️⃣ Configure Git for CI Commit
+      - name: Setup Git Auth
         run: |
           git config --global user.name "ci-bot"
           git config --global user.email "ci-bot@stacksimplify.com"
           git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
 
-      - name: Update Helm values file with new image tag
+      # 7️⃣ Update Helm values file with new image tag
+      - name: Update Helm values
         run: |
           cd src/ui
-          git config user.name "ci-bot"
-          git config user.email "ci-bot@stacksimplify.com"
-          sed -i "s|^  tag: .*|  tag: sha-${GITHUB_SHA::7}|" chart/values-ui.yaml
-          git diff --quiet || (
-            git add chart/values-ui.yaml
-            git commit -m "Update UI image tag to sha-${GITHUB_SHA::7}"
-            git push origin main
-          )
+          sed -i "s|^  tag: .*|  tag: sha-$SHORT_SHA|" chart/values-ui.yaml
 
+          if git diff --quiet; then
+            echo "No Helm changes detected."
+          else
+            git add chart/values-ui.yaml
+            git commit -m "Update UI image tag to sha-$SHORT_SHA"
+            git push origin main
+          fi
+
+      # 8️⃣ Completion Message
       - name: CI Complete
         run: |
-          echo "Image push and Git update done"
+          echo "UI image successfully pushed to ECR"
           echo "Tags used: $TAGS"

@@ -1,21 +1,21 @@
 # ============================================================================
 # UI SERVICE - CUSTOM VALUES
 # ============================================================================
- 
+
 # ----------------------------------------------------------------------------
 # IMAGE CONFIGURATION
 # ----------------------------------------------------------------------------
 image:
-  repository: 180789647333.dkr.ecr.us-east-1.amazonaws.com/retail-store/ui
+  repository: 391755179224.dkr.ecr.us-east-1.amazonaws.com/retail-store/ui
   pullPolicy: IfNotPresent
-  tag: sha-2f70b2a
+  tag: sha-2f70b2a   # Updated automatically by CI
 
 # ----------------------------------------------------------------------------
 # APPLICATION CONFIGURATION
 # ----------------------------------------------------------------------------
 app:
   theme: green  # Options: orange, default, green, teal
-  
+
   endpoints:
     catalog: http://catalog:80
     carts: http://carts:80
@@ -23,7 +23,7 @@ app:
     orders: http://orders:80
 
   chat:
-    enabled: false  # Not using AI chat features
+    enabled: false
 
 # ----------------------------------------------------------------------------
 # INGRESS CONFIGURATION - AWS ALB
@@ -35,7 +35,6 @@ ingress:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/healthcheck-path: /actuator/health/liveness
-    # External DNS Annotation
     external-dns.alpha.kubernetes.io/hostname: retailstore1.stacksimplify.com
   tls: []
   hosts: []
@@ -56,23 +55,22 @@ resources:
 # ----------------------------------------------------------------------------
 autoscaling:
   enabled: true
-  minReplicas: 1
+  minReplicas: 2        # Increased for PDB compatibility
   maxReplicas: 10
   targetCPUUtilizationPercentage: 80
 
 # ----------------------------------------------------------------------------
 # KARPENTER NODE SELECTION
 # ----------------------------------------------------------------------------
-# Schedule pods on Karpenter On-Demand nodes for stability
+# Schedule pods on Karpenter Spot nodes for cost optimization
 nodeSelector:
   karpenter.sh/capacity-type: spot
 
 # ----------------------------------------------------------------------------
 # TOPOLOGY SPREAD CONSTRAINTS
 # ----------------------------------------------------------------------------
-# Distribute pods across nodes AND availability zones for high availability
 topologySpreadConstraints:
-  # Spread across nodes (within same AZ) - Best effort
+  # Spread across nodes
   - maxSkew: 1
     topologyKey: kubernetes.io/hostname
     whenUnsatisfiable: ScheduleAnyway
@@ -81,11 +79,11 @@ topologySpreadConstraints:
         app.kubernetes.io/name: ui
         app.kubernetes.io/component: service
         app.kubernetes.io/instance: ui
-  
-  # Spread across availability zones - Strict requirement
+
+  # Strict AZ distribution
   - maxSkew: 1
     topologyKey: topology.kubernetes.io/zone
-    whenUnsatisfiable: ScheduleAnyway
+    whenUnsatisfiable: DoNotSchedule
     labelSelector:
       matchLabels:
         app.kubernetes.io/name: ui
@@ -95,13 +93,14 @@ topologySpreadConstraints:
 # ----------------------------------------------------------------------------
 # POD DISRUPTION BUDGET (PDB)
 # ----------------------------------------------------------------------------
-# Maintain minimum availability during voluntary disruptions (node drains, etc.)
 podDisruptionBudget:
-  enabled: false
-  minAvailable: 2      # At least 2 pods must remain available
-  maxUnavailable: 0    # Disable maxUnavailable (only minAvailable active)
+  enabled: true
+  minAvailable: 1     # Safe with minReplicas=2
+  maxUnavailable: 0
 
-
+# ----------------------------------------------------------------------------
+# OPENTELEMETRY
+# ----------------------------------------------------------------------------
 opentelemetry:
   enabled: true
-  instrumentation: "default-instrumentation"  
+  instrumentation: "default-instrumentation"
